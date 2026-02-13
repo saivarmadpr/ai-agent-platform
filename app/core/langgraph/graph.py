@@ -1,6 +1,7 @@
 """This file contains the LangGraph Agent/workflow and interactions with the LLM."""
 
 import asyncio
+import os
 from typing import (
     AsyncGenerator,
     Optional,
@@ -66,6 +67,10 @@ class LangGraphAgent:
         self._connection_pool: Optional[AsyncConnectionPool] = None
         self._graph: Optional[CompiledStateGraph] = None
         self.memory: Optional[AsyncMemory] = None
+        # Disable long-term memory if pgvector is not available (e.g. Railway managed Postgres)
+        self._memory_disabled: bool = os.getenv("DISABLE_LONG_TERM_MEMORY", "false").lower() in ("true", "1", "yes")
+        if self._memory_disabled:
+            logger.info("long_term_memory_disabled_by_env")
         logger.info(
             "langgraph_agent_initialized",
             model=settings.DEFAULT_LLM_MODEL,
@@ -146,6 +151,8 @@ class LangGraphAgent:
         Returns:
             str: The relevant memory.
         """
+        if self._memory_disabled:
+            return ""
         try:
             memory = await self._long_term_memory()
             results = await memory.search(user_id=str(user_id), query=query)
@@ -163,6 +170,8 @@ class LangGraphAgent:
             messages (list[dict]): The messages to update the long term memory with.
             metadata (dict): Optional metadata to include.
         """
+        if self._memory_disabled:
+            return
         try:
             memory = await self._long_term_memory()
             await memory.add(messages, user_id=str(user_id), metadata=metadata)
