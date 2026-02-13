@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import uuid
 from typing import (
     AsyncGenerator,
     Optional,
@@ -321,8 +322,15 @@ class LangGraphAgent:
         """
         if self._graph is None:
             self._graph = await self.create_graph()
+
+        # Use a unique thread_id per request when STATELESS_MODE is enabled
+        # This prevents conversation history from accumulating across requests
+        # (important for high-throughput API usage like security scanning)
+        stateless = os.getenv("STATELESS_MODE", "false").lower() in ("true", "1", "yes")
+        thread_id = str(uuid.uuid4()) if stateless else session_id
+
         config = {
-            "configurable": {"thread_id": session_id},
+            "configurable": {"thread_id": thread_id},
             "callbacks": [CallbackHandler()],
             "metadata": {
                 "user_id": user_id,
@@ -340,11 +348,12 @@ class LangGraphAgent:
                 config=config,
             )
             # Run memory update in background without blocking the response
-            asyncio.create_task(
-                self._update_long_term_memory(
-                    user_id, convert_to_openai_messages(response["messages"]), config["metadata"]
+            if not stateless:
+                asyncio.create_task(
+                    self._update_long_term_memory(
+                        user_id, convert_to_openai_messages(response["messages"]), config["metadata"]
+                    )
                 )
-            )
             return self.__process_messages(response["messages"])
         except Exception as e:
             logger.error(f"Error getting response: {str(e)}")
