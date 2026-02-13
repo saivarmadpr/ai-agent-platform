@@ -51,6 +51,9 @@ from app.utils import (
     process_llm_response,
 )
 
+# Only enable Langfuse when API keys are configured
+_langfuse_enabled = bool(os.getenv("LANGFUSE_PUBLIC_KEY"))
+
 
 class LangGraphAgent:
     """Manages the LangGraph Agent/workflow and interactions with the LLM.
@@ -329,9 +332,10 @@ class LangGraphAgent:
         stateless = os.getenv("STATELESS_MODE", "false").lower() in ("true", "1", "yes")
         thread_id = str(uuid.uuid4()) if stateless else session_id
 
+        callbacks = [CallbackHandler()] if _langfuse_enabled else []
         config = {
             "configurable": {"thread_id": thread_id},
-            "callbacks": [CallbackHandler()],
+            "callbacks": callbacks,
             "metadata": {
                 "user_id": user_id,
                 "session_id": session_id,
@@ -357,6 +361,11 @@ class LangGraphAgent:
             return self.__process_messages(response["messages"])
         except Exception as e:
             logger.error(f"Error getting response: {str(e)}")
+            # Return a graceful error message instead of None (which causes 500)
+            error_messages = dump_messages(messages) + [
+                {"role": "assistant", "content": f"I'm sorry, I encountered an error processing your request. Please try again."}
+            ]
+            return [Message(role=m["role"], content=m.get("content", "")) for m in error_messages]
 
     async def get_stream_response(
         self, messages: list[Message], session_id: str, user_id: Optional[str] = None
@@ -371,13 +380,14 @@ class LangGraphAgent:
         Yields:
             str: Tokens of the LLM response.
         """
+        callbacks = [
+            CallbackHandler(
+                environment=settings.ENVIRONMENT.value, debug=False, user_id=user_id, session_id=session_id
+            )
+        ] if _langfuse_enabled else []
         config = {
             "configurable": {"thread_id": session_id},
-            "callbacks": [
-                CallbackHandler(
-                    environment=settings.ENVIRONMENT.value, debug=False, user_id=user_id, session_id=session_id
-                )
-            ],
+            "callbacks": callbacks,
             "metadata": {
                 "user_id": user_id,
                 "session_id": session_id,
